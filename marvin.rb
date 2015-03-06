@@ -1,6 +1,6 @@
 require 'slack-rtmapi'
 require 'httparty'
-require 'JSON'
+require 'json'
 require 'wolfram-alpha'
 require 'mongo'
 
