@@ -168,6 +168,32 @@ def get_custom_response(from_user, text)
 	return nil
 end
 
+def get_reddit_random(user, text)
+	regex = /^(get a )?random post (in|from) (?<sub>(\S+))/i
+	match = regex.match(text)
+	if match != nil
+		sub = match[:sub]
+		path = "http://api.reddit.com/r/#{sub}/?sort=random"
+		response = HTTParty.get path
+		json = JSON.load(response.body)
+		children = json["data"]["children"]
+
+		i = 10
+		while i > 0
+			child = children.sample
+			url = child["data"]["url"]
+			puts child
+			if /(jpg|gif|gifv|png)$/i =~ url
+				return "<@user> #{url}"
+			end
+
+			i = i - 1
+		end
+	end
+
+	return nil
+end
+
 def get_response(user, message)
 	return nil if message == nil
 
@@ -196,6 +222,8 @@ def get_response(user, message)
 	elsif is_at
 		if set_custom_response(user, text)
 			return "<@#{user}> you got it!"
+		elsif response = get_reddit_random(user, text)
+			return response
 		elsif /who are you\??/i =~ text
 			return "a depressed robot"
 		elsif /who is the (best|best person)\??/i =~ text
