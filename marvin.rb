@@ -105,7 +105,6 @@ end
 def search_drink(user, query)
 	search = query.gsub(" ", "-")
 	path = "https://addb.absolutdrinks.com/quickSearch/drinks/#{search}/?apiKey=#{AbsolutAPIKey}"
-	puts path
 	results = JSON.load(HTTParty.get(path).body)["result"]
 	if results.length == 0
 		return "Hmm, I dunno man? Jameson is always good."
@@ -125,7 +124,6 @@ def set_custom_response(from_user, text)
 
 	if when_trigger.match(text)
 		match = when_trigger.match(text)
-		puts match
 		user = match[:user]
 		if user.downcase == "i"
 			user = from_user
@@ -139,7 +137,6 @@ def set_custom_response(from_user, text)
 			response: match[:response]
 		}
 
-		puts data
 		MongoDB["responses"].insert(data)
 
 		return true
@@ -150,9 +147,7 @@ end
 
 def get_custom_response(from_user, text)
 	all_responses = MongoDB["responses"]
-	puts "Responses: #{all_responses}"
 	all_responses.find.each do |row|
-		puts row
 		user = row["user"].downcase
 		if user != "anyone" && user != from_user.downcase
 			next
@@ -169,25 +164,138 @@ def get_custom_response(from_user, text)
 end
 
 def get_reddit_random(user, text)
-	regex = /^(get a )?random post (in|from) (?<sub>(\S+))/i
+	regex = /^(get( me)? a )?random post (in|from) (?<sub>(\S+))/i
 	match = regex.match(text)
 	if match != nil
 		sub = match[:sub]
 		path = "http://api.reddit.com/r/#{sub}/?sort=random"
 		response = HTTParty.get path
 		json = JSON.load(response.body)
-		children = json["data"]["children"]
+
+ 		if json == nil
+ 			return "I ain't find nuttin'"
+ 		end
+ 
+ 		data = json["data"]
+
+ 		if data.count == 0
+ 			return "I ain't find nuttin'"
+ 		end
+ 
+ 		children = data["children"]
+ 		if children == nil
+ 			return "I ain't find nuttin'"
+ 		end
+ 
+ 		if children.count == 0
+ 			return "I ain't find nuttin'"
+ 		end
 
 		i = 10
 		while i > 0
 			child = children.sample
 			url = child["data"]["url"]
-			puts child
+
 			if /(jpg|gif|gifv|png)$/i =~ url
 				return "<@user> #{url}"
 			end
 
 			i = i - 1
+		end
+	end
+
+	return nil
+end
+
+def set_macros(user, message)
+	regex = /set my (?<day>\w+) day macros to P(?<protein>\d{1,3}) C(?<carbs>\d{1,3}) F(?<fat>\d{1,3})/i
+	match = regex.match(message)
+	if match != nil
+		day = match[:day]
+		protein = match[:protein]
+		carbs = match[:carbs]
+		fat = match[:fat]
+
+		old_macros = MongoDB["macros"].find({ user: user })
+		old_macros.each do |om|
+			om[:is_current] = false
+			MongoDB["macros"].update({ "_id" => om["_id"] }, om)
+		end
+
+		date = Time.now.utc
+
+		new_macros = {
+			user: user,
+			day: day,
+			protein: protein,
+			carbs: carbs,
+			fat: fat,
+			date: date,
+			is_current: true
+		}
+
+		MongoDB["macros"].insert(new_macros)
+		return "<@#{user}> I set your #{day} macros to P#{protein} C#{carbs} F#{fat}"
+	end
+
+	return nil
+end
+
+def get_macros(user, text)
+	regex = /what are my( (?<day>\w+)( day)?)? macros\??/i
+	match = regex.match(text)
+	if match != nil
+		day = match[:day] || "lifting"
+		macros = MongoDB["macros"].find({ user: user, is_current: true, day: day }).to_a
+		if macros.count == 0
+			return "You haven't set your #{day} day macros yet.\nYou can set them by telling me '#{Name} set my <day> macros to P<protein> C<carbs> F<fat>'"
+		else
+			m = macros.first
+			return "<@#{user}> your current #{day} macros are P#{m["protein"]} C#{m["carbs"]} F#{m["fat"]} (you set them: #{m["date"]})"
+		end
+	end
+
+	return nil
+end
+
+def set_weight(user, text)
+	regex = /set my weight to (?<weight>\d*.\d{1,2})/i
+	match = regex.match(text)
+	if match != nil
+		weight = match[:weight]
+
+		old_weights = MongoDB["weight"].find({ user: user })
+		old_weights.each do |ow|
+			ow[:is_current] = false
+			MongoDB["weight"].update({ "_id" => ow["_id"] }, ow)
+		end
+
+		date = Time.now.utc
+
+		new_weight = {
+			user: user,
+			weight: weight,
+			date: date,
+			is_current: true
+		}
+
+		MongoDB["weight"].insert(new_weight)
+		return "<@#{user}> I set your weight to #{weight}"
+	end
+
+	return nil
+end
+
+def get_weight(user, text)
+	regex = /what.?s my current weight\??/i
+	match = regex.match(text)
+	if match != nil
+		weights = MongoDB["weight"].find({ user: user, is_current: true }).to_a
+		if weights.count == 0
+			return "You haven't set your weight yet!\nYou can set it by saying '#{Name}' set my weight to <weight>"
+		else
+			m = weights.first
+			return "<@#{user}> your current weight is #{m["weight"]}"
 		end
 	end
 
@@ -220,7 +328,15 @@ def get_response(user, message)
 	if custom_response = get_custom_response(user, text)
 		return custom_response
 	elsif is_at
-		if set_custom_response(user, text)
+		if weight = set_weight(user, text)
+			return weight
+		elsif weight = get_weight(user, text)
+			return weight
+		elsif macros = set_macros(user, text)
+			return macros
+		elsif macros = get_macros(user, text)
+			return macros
+		elsif set_custom_response(user, text)
 			return "<@#{user}> you got it!"
 		elsif response = get_reddit_random(user, text)
 			return response
@@ -253,10 +369,8 @@ def get_response(user, message)
 			end
 		elsif /^tell me/ =~ text
 			search = /^tell me(, | )?(?<question>[\w+]*)\??/i.match(text)
-			puts search
 			if search != nil
 				question = search[:question]
-				puts question
 				return "<@#{user}> Thinking ................ #{Magic8Ball.sample}"
 			end
 		else
@@ -315,7 +429,6 @@ def shoot(client, channel, person)
 		spaces_before = " " * (num_steps - step)
 		spaces_after = " " * step
 		string = "#{person}#{spaces_before}・#{spaces_after}🔫 #{Name}"
-		puts string
 		send_message(client, channel, string)
 
 		step = step + 1
@@ -338,7 +451,6 @@ def respond_to_message(client, channel, user, message)
 		if can_shoot(rest)
 			matches = /^shoot (?<person>(<@\w+>|\w+))/i.match(rest)
 			person = matches[:person]
-			puts "Shoot"
 			shoot(client, channel, person)
 		end
 	end
